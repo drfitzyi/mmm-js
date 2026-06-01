@@ -15,12 +15,14 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] Add `vite.config.ts` with correct `base` path for GitHub Pages project sites (`/mmm-js/`).
 - [x] Update `CLAUDE.md` with the real build/lint/test commands.
 
-## Phase 1 — Audio I/O foundation (no processing yet)
-- [ ] File intake: `<input type="file">` + drag-and-drop, read to `ArrayBuffer`. Accept MP3 and WAV.
-- [ ] Decode/inspect: detect container/format from bytes (don't trust extension).
-- [ ] WAV parser/writer (RIFF chunks) — needed for both metadata and raw PCM access.
-- [ ] MP3 frame parser — locate audio frames vs. metadata regions (ID3v1/ID3v2 tags, APE tags).
-- [ ] Result download via `Blob` + object URL. Confirm nothing leaves the browser (network tab = silent).
+## Phase 1 — Audio I/O foundation (no processing yet) ✅
+- [x] File intake: `<input type="file">` + drag-and-drop, read to `ArrayBuffer`. Accept MP3 and WAV. (`src/io/file.ts`, `src/ui/app.ts`)
+- [x] Decode/inspect: detect container/format from bytes (don't trust extension). (`src/audio/format.ts`)
+- [x] WAV parser/writer (RIFF chunks) — chunk parser + `buildWav` that recomputes sizes. (`src/audio/wav.ts`)
+- [x] MP3 frame parser — locate audio frames vs. metadata regions (ID3v2/ID3v1/APEv2). (`src/audio/mp3.ts`)
+- [x] Result download via `Blob` + object URL. (`src/io/download.ts`)
+- [x] Unified `Region` model (`header`/`audio`/`metadata`) + `parseAudio` dispatcher feeding the UI breakdown. (`src/audio/index.ts`, `src/audio/types.ts`)
+- [ ] Manual check: confirm in-browser that the network tab stays silent on the deployed/dev build.
 
 ## Phase 2 — Metadata removal (the core, highest-value feature)
 - [ ] Strip ID3v2 (leading) and ID3v1 (trailing 128 bytes) tags from MP3.
