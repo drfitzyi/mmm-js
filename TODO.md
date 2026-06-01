@@ -67,10 +67,13 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - Note: Cancel aborts the DSP stage; for MP3 it can't interrupt an in-flight ffmpeg decode/encode (separate worker).
 - [ ] Browser verification of worker progress/cancel still pending (shared with the ffmpeg in-browser check).
 
-## Phase 6 — UI
-- [ ] Single-page interface: drop zone, mode selector, progress, before/after report, download.
-- [ ] Surface the forensic/verification output to the user.
-- [ ] Handle errors gracefully (unsupported format, decode failure, oversized files).
+## Phase 6 — UI ✅
+- [x] Single-page interface: masthead, clickable/drop label zone (reflects loaded file), mode selector,
+      progress bar + cancel, detected-structure table, forensic result, download. (`src/ui/app.ts`, `src/style.css`)
+- [x] Surface the forensic/verification output (mode, output, lossless, metadata removed, spectral params,
+      input watermarks, verification pass/fail) as a table.
+- [x] Graceful errors: unsupported format (with a hint), empty file, read failure, large-file warning.
+- [x] Distinctive restrained styling with design tokens + light/dark; accessible progress/status (aria-live).
 
 ## Phase 7 — Deploy to GitHub Pages
 - [ ] GitHub Actions workflow: build on push to `main`, publish `dist/` to Pages.

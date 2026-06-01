@@ -9,32 +9,66 @@ import { MODES, MODE_ORDER, isModeName } from '../modes';
 import type { ModeName } from '../modes';
 import { DspWorkerClient } from '../worker/client';
 
-/** Mount the (Phase 1) intake UI into the given root element. */
+/** Warn (but still allow) once a file is larger than this — big in-browser DSP can exhaust memory. */
+const LARGE_FILE_BYTES = 100 * 1024 * 1024;
+
+/** Mount the single-page UI into the given root element. */
 export function mountApp(root: HTMLElement): void {
   root.innerHTML = `
-    <h1>mmm</h1>
-    <p class="tagline">Audio metadata massacrer — runs entirely in your browser. Nothing is uploaded.</p>
-    <div id="drop" class="drop">
-      <p>Drop an MP3 or WAV here, or choose a file:</p>
-      <input id="file" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" />
-    </div>
-    <section id="report" hidden></section>
+    <header class="masthead">
+      <h1 class="wordmark">mmm</h1>
+      <p class="tagline">
+        Melodic&nbsp;Metadata&nbsp;Massacrer — strip tags and disrupt audio fingerprints,
+        entirely in your browser.
+      </p>
+    </header>
+
+    <label id="drop" class="drop">
+      <input id="file" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" hidden />
+      <span class="drop__icon" aria-hidden="true">♪</span>
+      <span class="drop__primary">Drop an MP3 or WAV here</span>
+      <span class="drop__secondary">or click to choose a file</span>
+    </label>
+
+    <section id="report" class="card" hidden></section>
+
+    <footer class="footer">
+      Files never leave your device — everything runs locally. MP3 support loads ffmpeg.wasm
+      (~30&nbsp;MB) on first use.
+    </footer>
   `;
 
-  const drop = required<HTMLDivElement>(root, '#drop');
+  const drop = required<HTMLLabelElement>(root, '#drop');
+  const dropPrimary = required<HTMLElement>(root, '.drop__primary');
   const input = required<HTMLInputElement>(root, '#file');
   const report = required<HTMLElement>(root, '#report');
 
   async function handleFile(file: File): Promise<void> {
-    const bytes = await readFileAsBytes(file);
+    drop.classList.add('has-file');
+    dropPrimary.textContent = file.name;
+
+    if (file.size === 0) {
+      showError(report, `${file.name} is empty.`);
+      return;
+    }
+
+    let bytes: Uint8Array;
+    try {
+      bytes = await readFileAsBytes(file);
+    } catch (err) {
+      showError(report, `Could not read ${file.name}: ${message(err)}`);
+      return;
+    }
+
     try {
       const info = parseAudio(bytes);
       renderReport(report, file.name, bytes, info);
     } catch (err) {
-      report.hidden = false;
-      report.innerHTML = `<p class="error">Could not read ${escapeHtml(file.name)}: ${escapeHtml(
-        err instanceof Error ? err.message : String(err)
-      )}</p>`;
+      showError(
+        report,
+        `${file.name} is not a supported MP3 or WAV (${message(err)}).`,
+        'Supported inputs: MP3 (with or without ID3/APE tags) and PCM/float WAV.'
+      );
     }
   }
 
@@ -61,6 +95,14 @@ export function mountApp(root: HTMLElement): void {
   });
 }
 
+function showError(report: HTMLElement, message: string, hint?: string): void {
+  report.hidden = false;
+  report.innerHTML = `
+    <p class="error">${escapeHtml(message)}</p>
+    ${hint ? `<p class="note">${escapeHtml(hint)}</p>` : ''}
+  `;
+}
+
 function renderReport(el: HTMLElement, name: string, bytes: Uint8Array, info: AudioInfo): void {
   const metaBytes = metadataByteCount(info);
   const rows = info.regions
@@ -74,18 +116,32 @@ function renderReport(el: HTMLElement, name: string, bytes: Uint8Array, info: Au
     )
     .join('');
 
+  const largeWarning =
+    info.byteLength > LARGE_FILE_BYTES
+      ? `<p class="warning">Large file (${formatBytes(info.byteLength)}). Spectral processing happens in memory and may be slow or hit browser limits.</p>`
+      : '';
+
+  const mp3Hint =
+    info.format === 'mp3'
+      ? `<p class="note">A spectral pass on MP3 loads ffmpeg.wasm (~30&nbsp;MB) the first time, then re-encodes (lossy). The metadata-only mode is lossless and needs no download.</p>`
+      : '';
+
   el.hidden = false;
   el.innerHTML = `
-    <h2>${escapeHtml(name)}</h2>
-    <p>
-      Format: <strong>${info.format.toUpperCase()}</strong> ·
-      ${formatBytes(info.byteLength)} total ·
-      <strong>${formatBytes(metaBytes)}</strong> of strippable metadata detected
+    <h2 class="filename" title="${escapeHtml(name)}">${escapeHtml(name)}</h2>
+    <p class="summary">
+      <span class="chip">${info.format.toUpperCase()}</span>
+      <span>${formatBytes(info.byteLength)}</span>
+      <span><strong>${formatBytes(metaBytes)}</strong> strippable metadata</span>
     </p>
+    ${largeWarning}
+
+    <h3>Detected structure</h3>
     <table class="regions">
       <thead><tr><th>Region</th><th>Kind</th><th class="num">Size</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
+
     <section class="action">
       <h3>Process</h3>
       <label class="mode">
@@ -95,13 +151,14 @@ function renderReport(el: HTMLElement, name: string, bytes: Uint8Array, info: Au
         </select>
       </label>
       <p id="mode-desc" class="note"></p>
+      ${mp3Hint}
       <div class="buttons">
         <button id="process" type="button">Process &amp; download</button>
         <button id="analyze" type="button">Analyze for watermarks</button>
         <button id="cancel" type="button" hidden>Cancel</button>
       </div>
-      <progress id="progress" max="1" value="0" hidden></progress>
-      <p id="status" class="note" role="status"></p>
+      <progress id="progress" max="1" value="0" aria-label="Processing progress" hidden></progress>
+      <p id="status" class="note" role="status" aria-live="polite"></p>
       <div id="report-detail"></div>
       <div id="analysis"></div>
     </section>
