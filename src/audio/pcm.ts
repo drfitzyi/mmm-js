@@ -66,6 +66,14 @@ export function decodeWavPcm(bytes: Uint8Array): PcmAudio {
   return { sampleRate, channels };
 }
 
+/** Read just the sample rate from a WAV's fmt chunk (without decoding samples). */
+export function readWavSampleRate(bytes: Uint8Array): number {
+  const wav = parseWav(bytes);
+  const fmt = wav.chunks.find((c) => c.id === 'fmt ');
+  if (!fmt) throw new Error('WAV is missing a fmt chunk');
+  return new DataView(fmt.data.buffer, fmt.data.byteOffset, fmt.data.byteLength).getUint32(4, true);
+}
+
 /** Encode per-channel Float32 audio into a 16-bit PCM WAV file. */
 export function encodeWavPcm(audio: PcmAudio): Uint8Array {
   const { sampleRate, channels } = audio;

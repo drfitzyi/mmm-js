@@ -1,4 +1,4 @@
-import { detectFormat, parseAudio, metadataByteCount } from '../audio';
+import { detectFormat, parseAudio, metadataByteCount, readWavSampleRate } from '../audio';
 import type { AudioFormat } from '../audio';
 import { stripMetadata } from './metadata';
 import { cleanWavSpectra, analyzeWavWatermarks } from './spectral';
@@ -34,12 +34,38 @@ const inProcessRunner: DspRunner = {
   analyze: (wav) => Promise.resolve(analyzeWavWatermarks(wav)),
 };
 
+/**
+ * The codec operations that require ffmpeg.wasm (browser-only). Injectable so
+ * the pipeline's orchestration can be tested in Node with a stub.
+ */
+export interface Codec {
+  decodeToWav(input: Uint8Array, name: string): Promise<Uint8Array>;
+  encodeMp3(wav: Uint8Array, quality: number): Promise<Uint8Array>;
+  pitchToWav(wav: Uint8Array, sampleRate: number, ratio: number): Promise<Uint8Array>;
+  pitchToMp3(
+    wav: Uint8Array,
+    sampleRate: number,
+    ratio: number,
+    quality: number
+  ): Promise<Uint8Array>;
+}
+
+// Default codec: lazily import ffmpeg.wasm so its ~30 MB core stays out of the
+// initial bundle and is only fetched when a lossy mode actually runs.
+const ffmpegCodec: Codec = {
+  decodeToWav: async (input, name) => (await import('../audio/ffmpeg')).decodeToWav(input, name),
+  encodeMp3: async (wav, quality) => (await import('../audio/ffmpeg')).encodeMp3(wav, quality),
+  pitchToWav: async (wav, sampleRate, ratio) =>
+    (await import('../audio/ffmpeg')).pitchShiftToWav(wav, sampleRate, ratio),
+  pitchToMp3: async (wav, sampleRate, ratio, quality) =>
+    (await import('../audio/ffmpeg')).pitchShiftToMp3(wav, sampleRate, ratio, quality),
+};
+
 export interface PipelineOptions {
   /** Base seed for spectral jitter (reproducible output). */
   seed?: number;
   /** libmp3lame quality for MP3 output (0 best … 9). */
   mp3Quality?: number;
-  onLog?: (message: string) => void;
   /** DSP progress, 0..1. */
   onProgress?: (ratio: number) => void;
 }
@@ -55,15 +81,17 @@ export interface ForensicReport {
   inputSize: number;
   outputFormat: AudioFormat;
   outputSize: number;
-  /** True only for the metadata-only mode (audio preserved bit-for-bit). */
+  /** True only when the audio is preserved bit-for-bit (metadata-only mode). */
   lossless: boolean;
   metadata: {
     removed: RemovedRegion[];
     bytesRemoved: number;
   };
-  /** Spectral parameters applied, or null for metadata-only. */
+  /** Pitch shift applied, in percent (0 = none). The primary fingerprint-breaker. */
+  pitchPercent: number;
+  /** Extra spectral perturbation applied, or null. */
   spectral: SpectralSettings | null;
-  /** Per-channel watermark analysis of the input (spectral modes only). */
+  /** Per-channel watermark analysis of the input (lossy modes only). */
   watermarksBefore: WatermarkAnalysis[];
   verification: {
     /** Metadata bytes still present in the output (should be 0). */
@@ -82,12 +110,16 @@ export interface ProcessOutput {
 }
 
 /**
- * Process a file according to a named mode and return the output plus a forensic
- * report describing what changed and the result of re-parsing the output.
+ * Process a file according to a named mode, returning the output and a forensic
+ * report (what changed + a re-parse verification).
  *
  * - `metadata`: lossless tag strip, no re-encode.
- * - spectral modes: decode → spectral clean → re-encode (WAV in pure TS, MP3 via
- *   ffmpeg.wasm). Re-encoding inherently drops container metadata.
+ * - lossy modes: decode (MP3) → optional spectral perturbation → pitch shift →
+ *   re-encode, then a lossless metadata strip on the result so the output is
+ *   guaranteed tag-free regardless of what ffmpeg wrote.
+ *
+ * The pitch shift is the actual acoustic-fingerprint breaker; the spectral
+ * perturbation is a subtle extra.
  *
  * @throws on unsupported input.
  */
@@ -95,7 +127,8 @@ export async function processWithMode(
   bytes: Uint8Array,
   modeName: ModeName,
   options: PipelineOptions = {},
-  runner: DspRunner = inProcessRunner
+  runner: DspRunner = inProcessRunner,
+  codec: Codec = ffmpegCodec
 ): Promise<ProcessOutput> {
   const mode = MODES[modeName];
   const format = detectFormat(bytes);
@@ -106,13 +139,12 @@ export async function processWithMode(
     .map((r) => ({ label: r.label, length: r.length }));
   const inputMetaBytes = inputMetaRegions.reduce((sum, r) => sum + r.length, 0);
 
+  const isLossless = !mode.spectral && mode.pitchPercent === 0;
+
   // --- Lossless metadata-only mode -----------------------------------------
-  if (!mode.spectral) {
+  if (isLossless) {
     const strip = stripMetadata(bytes);
     const residual = metadataByteCount(parseAudio(strip.bytes));
-    const notes: string[] = [];
-    if (residual === 0) notes.push('Output contains no residual metadata.');
-    else notes.push(`Output still has ${residual} bytes of metadata.`);
     return {
       bytes: strip.bytes,
       outputFormat: format,
@@ -127,55 +159,58 @@ export async function processWithMode(
           removed: strip.removed.map((r) => ({ label: r.label, length: r.length })),
           bytesRemoved: strip.bytesRemoved,
         },
+        pitchPercent: 0,
         spectral: null,
         watermarksBefore: [],
         verification: {
           residualMetadataBytes: residual,
           audioPreserved: true,
           passed: residual === 0,
-          notes,
+          notes:
+            residual === 0
+              ? ['Output contains no residual metadata.']
+              : [`Output still has ${residual} bytes of metadata.`],
         },
       },
     };
   }
 
-  // --- Spectral modes -------------------------------------------------------
-  // ffmpeg compute already runs in its own worker, so we don't route its
-  // progress to onProgress — that's reserved for the DSP stage (the bar's
-  // meaningful 0..1). ffmpeg phases just show as "busy" in the UI.
-  const bridge = { onLog: options.onLog };
+  // --- Lossy modes (pitch shift, optional spectral perturbation) -----------
+  const quality = options.mp3Quality ?? 2;
+  const ratio = 1 + mode.pitchPercent / 100;
 
-  // Get a WAV representation to analyse and process.
-  let wav: Uint8Array;
-  if (format === 'wav') {
-    wav = bytes;
-  } else {
-    const { decodeToWav } = await import('../audio/ffmpeg');
-    wav = await decodeToWav(bytes, 'input.mp3', bridge);
-  }
-
+  // A WAV representation to analyse and process.
+  const wav = format === 'wav' ? bytes : await codec.decodeToWav(bytes, 'input.mp3');
+  const sampleRate = readWavSampleRate(wav);
   const watermarksBefore = await runner.analyze(wav);
-  const cleanedWav = await runner.clean(wav, mode.spectral, {
-    seed: options.seed,
-    onProgress: options.onProgress,
-  });
 
-  let outBytes: Uint8Array;
+  const perturbed = mode.spectral
+    ? await runner.clean(wav, mode.spectral, { seed: options.seed, onProgress: options.onProgress })
+    : wav;
+
+  // Pitch shift (and, for MP3, encode) via the codec.
+  let raw: Uint8Array;
   if (format === 'wav') {
-    outBytes = cleanedWav;
+    raw = mode.pitchPercent > 0 ? await codec.pitchToWav(perturbed, sampleRate, ratio) : perturbed;
   } else {
-    const { encodeMp3 } = await import('../audio/ffmpeg');
-    outBytes = await encodeMp3(cleanedWav, options.mp3Quality ?? 2, bridge);
+    raw =
+      mode.pitchPercent > 0
+        ? await codec.pitchToMp3(perturbed, sampleRate, ratio, quality)
+        : await codec.encodeMp3(perturbed, quality);
   }
 
+  // Guarantee a tag-free output regardless of what the encoder wrote.
+  const outBytes = stripMetadata(raw).bytes;
   const residual = metadataByteCount(parseAudio(outBytes));
+
   const notes: string[] = [];
+  if (mode.pitchPercent > 0)
+    notes.push(`Pitch shifted ~${mode.pitchPercent}% (audible key change).`);
+  if (mode.spectral) notes.push('Spectral perturbation applied.');
   notes.push(
-    residual === 0
-      ? 'Re-encode dropped all container metadata.'
-      : `Output still has ${residual} bytes of metadata.`
+    residual === 0 ? 'Output is metadata-free.' : `Output still has ${residual} bytes of metadata.`
   );
-  if (format === 'mp3') notes.push('MP3 re-encode is lossy by nature.');
+  if (format === 'mp3') notes.push('MP3 re-encode is lossy.');
 
   return {
     bytes: outBytes,
@@ -188,6 +223,7 @@ export async function processWithMode(
       outputSize: outBytes.length,
       lossless: false,
       metadata: { removed: inputMetaRegions, bytesRemoved: inputMetaBytes },
+      pitchPercent: mode.pitchPercent,
       spectral: mode.spectral,
       watermarksBefore,
       verification: {

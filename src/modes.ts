@@ -17,9 +17,15 @@ export interface Mode {
   label: string;
   description: string;
   /**
-   * Spectral fingerprint disruption settings, or null for metadata-only.
-   * `null` means a lossless tag strip with no audio re-encode; any non-null
-   * value decodes → modifies → re-encodes (and so also drops metadata).
+   * Pitch shift, in percent (0 = none). This is the primary fingerprint-breaker:
+   * acoustic recognition keys on spectral-peak positions, and shifting pitch
+   * moves all of them. It is audible as a slight key change and requires a
+   * re-encode (ffmpeg).
+   */
+  pitchPercent: number;
+  /**
+   * Optional extra per-bin spectral perturbation (in addition to the pitch
+   * shift). Subtle and not sufficient on its own against robust fingerprinters.
    */
   spectral: SpectralSettings | null;
 }
@@ -28,26 +34,31 @@ export const MODES: Record<ModeName, Mode> = {
   metadata: {
     name: 'metadata',
     label: 'Metadata only (lossless)',
-    description: 'Strip tags and ancillary chunks, keeping the audio bit-for-bit. No re-encode.',
+    description:
+      'Strip tags only, keeping the audio bit-for-bit. Does NOT defeat acoustic recognition.',
+    pitchPercent: 0,
     spectral: null,
   },
   turbo: {
     name: 'turbo',
-    label: 'Turbo (fast)',
-    description: 'Light spectral disruption at a small FFT size — quickest lossy pass.',
-    spectral: { intensity: 0.18, fftSize: 1024, passes: 1 },
+    label: 'Turbo (gentle pitch)',
+    description: 'A ~3% pitch shift — mildest audible change, may not fool stronger matchers.',
+    pitchPercent: 3,
+    spectral: null,
   },
   standard: {
     name: 'standard',
-    label: 'Standard',
-    description: 'Balanced spectral fingerprint disruption.',
-    spectral: { intensity: 0.32, fftSize: 2048, passes: 1 },
+    label: 'Standard (pitch shift)',
+    description: 'A ~4.5% pitch shift to break fingerprints. Audible as a slight key change.',
+    pitchPercent: 4.5,
+    spectral: null,
   },
   paranoid: {
     name: 'paranoid',
     label: 'Paranoid (maximum)',
-    description: 'Aggressive multi-pass disruption at a large FFT size.',
-    spectral: { intensity: 0.85, fftSize: 4096, passes: 2 },
+    description: 'A ~7% pitch shift plus spectral perturbation — most disruptive, most audible.',
+    pitchPercent: 7,
+    spectral: { intensity: 0.5, fftSize: 2048, passes: 1 },
   },
 };
 

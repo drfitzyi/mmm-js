@@ -109,7 +109,70 @@ export function encodeMp3(
     wav,
     'input.wav',
     'output.mp3',
-    ['-c:a', 'libmp3lame', '-q:a', String(quality)],
+    ['-map_metadata', '-1', '-c:a', 'libmp3lame', '-q:a', String(quality)],
+    options
+  );
+}
+
+/**
+ * Build an ffmpeg filter that shifts pitch up by `ratio` while preserving tempo:
+ * resample faster (raises pitch + tempo), restore the sample rate, then slow the
+ * tempo back down. A small shift (a few percent) is enough to move spectral
+ * content off the positions acoustic fingerprinters key on.
+ */
+function pitchFilter(sampleRate: number, ratio: number): string {
+  const target = Math.round(sampleRate * ratio);
+  const tempo = (1 / ratio).toFixed(6);
+  return `asetrate=${target},aresample=${sampleRate},atempo=${tempo}`;
+}
+
+/** Pitch-shift a WAV and return a WAV (16-bit PCM). */
+export function pitchShiftToWav(
+  wav: Uint8Array,
+  sampleRate: number,
+  ratio: number,
+  options?: TranscodeOptions
+): Promise<Uint8Array> {
+  return transcode(
+    wav,
+    'pitch-in.wav',
+    'pitch-out.wav',
+    [
+      '-af',
+      pitchFilter(sampleRate, ratio),
+      '-map_metadata',
+      '-1',
+      '-flags',
+      '+bitexact',
+      '-c:a',
+      'pcm_s16le',
+    ],
+    options
+  );
+}
+
+/** Pitch-shift a WAV and encode the result to MP3. */
+export function pitchShiftToMp3(
+  wav: Uint8Array,
+  sampleRate: number,
+  ratio: number,
+  quality = 2,
+  options?: TranscodeOptions
+): Promise<Uint8Array> {
+  return transcode(
+    wav,
+    'pitch-in.wav',
+    'pitch-out.mp3',
+    [
+      '-af',
+      pitchFilter(sampleRate, ratio),
+      '-map_metadata',
+      '-1',
+      '-c:a',
+      'libmp3lame',
+      '-q:a',
+      String(quality),
+    ],
     options
   );
 }

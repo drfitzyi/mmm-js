@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decodeWavPcm, encodeWavPcm } from './pcm';
+import { decodeWavPcm, encodeWavPcm, readWavSampleRate } from './pcm';
 import type { PcmAudio } from './pcm';
 
 function tone(length: number, freq: number, sampleRate: number): Float32Array {
@@ -43,6 +43,11 @@ describe('WAV PCM codec', () => {
     const decoded = decodeWavPcm(encodeWavPcm({ sampleRate: 8000, channels: [loud] }));
     expect(decoded.channels[0]![0]).toBeCloseTo(1, 3);
     expect(decoded.channels[0]![1]).toBeCloseTo(-1, 3);
+  });
+
+  it('reads the sample rate from the fmt chunk', () => {
+    const bytes = encodeWavPcm({ sampleRate: 32000, channels: [tone(50, 200, 32000)] });
+    expect(readWavSampleRate(bytes)).toBe(32000);
   });
 
   it('throws on an unsupported bit depth', () => {

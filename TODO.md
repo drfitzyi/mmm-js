@@ -45,6 +45,13 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
   has only been validated via the bundler, not run in a real browser. Needs a manual in-page test.
 - [ ] Consider moving DSP off the main thread (Web Worker) — see Phase 5; long files will block the UI today.
 
+## Recognition reality (learned from testing)
+Per-bin spectral magnitude/phase jitter does **not** defeat acoustic fingerprinting (verified: a
+paranoid-mode song was still recognized by songfinder.gg) — matchers key on spectral-peak constellations
+and ignore phase. The effective breaker is a **pitch shift** (a few %, audible), done via ffmpeg. So all
+modes except `metadata` now pitch-shift (lossy, require ffmpeg even for WAV); the spectral jitter is a
+subtle extra in paranoid only.
+
 ## Phase 4 — Processing modes (match upstream behavior) ✅
 - [x] Mode presets: `metadata` (lossless), `turbo`, `standard`, `paranoid`. (`src/modes.ts`)
 - [x] Standard mode — balanced spectral disruption + metadata drop via re-encode.

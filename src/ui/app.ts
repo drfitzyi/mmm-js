@@ -121,10 +121,11 @@ function renderReport(el: HTMLElement, name: string, bytes: Uint8Array, info: Au
       ? `<p class="warning">Large file (${formatBytes(info.byteLength)}). Spectral processing happens in memory and may be slow or hit browser limits.</p>`
       : '';
 
-  const mp3Hint =
-    info.format === 'mp3'
-      ? `<p class="note">A spectral pass on MP3 loads ffmpeg.wasm (~30&nbsp;MB) the first time, then re-encodes (lossy). The metadata-only mode is lossless and needs no download.</p>`
-      : '';
+  const mp3Hint = `<p class="note">
+      Every mode except <em>Metadata only</em> shifts pitch to defeat acoustic recognition — this is
+      audible (a slight key change) and re-encodes via ffmpeg.wasm (~30&nbsp;MB, loaded once on first use),
+      even for WAV. <em>Metadata only</em> is lossless but does not affect recognition.
+    </p>`;
 
   el.hidden = false;
   el.innerHTML = `
@@ -239,6 +240,9 @@ function renderForensicReport(report: ForensicReport): string {
     ['Lossless', report.lossless ? 'yes (audio preserved bit-for-bit)' : 'no'],
     ['Metadata removed', `${formatBytes(report.metadata.bytesRemoved)}`],
   ];
+  if (report.pitchPercent > 0) {
+    rows.push(['Pitch shift', `~${report.pitchPercent}% (breaks acoustic fingerprints)`]);
+  }
   if (report.spectral) {
     rows.push([
       'Spectral',
