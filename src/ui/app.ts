@@ -2,8 +2,11 @@ import { readFileAsBytes } from '../io/file';
 import { downloadBytes, mimeForName } from '../io/download';
 import { parseAudio, metadataByteCount } from '../audio';
 import type { AudioInfo } from '../audio';
-import { stripMetadata } from '../sanitize/metadata';
-import { spectralCleanFile, analyzeFile } from '../sanitize/process';
+import { analyzeFile } from '../sanitize/process';
+import { processWithMode } from '../sanitize/pipeline';
+import type { ForensicReport } from '../sanitize/pipeline';
+import { MODES, MODE_ORDER, isModeName } from '../modes';
+import type { ModeName } from '../modes';
 
 /** Mount the (Phase 1) intake UI into the given root element. */
 export function mountApp(root: HTMLElement): void {
@@ -83,80 +86,57 @@ function renderReport(el: HTMLElement, name: string, bytes: Uint8Array, info: Au
       <tbody>${rows}</tbody>
     </table>
     <section class="action">
-      <h3>Strip metadata</h3>
-      <p class="note">Lossless: removes tags, keeps the audio bit-for-bit.</p>
-      <button id="strip" type="button">Strip metadata &amp; download</button>
-      <p id="strip-status" class="note" role="status"></p>
-    </section>
-
-    <section class="action">
-      <h3>Disrupt fingerprints (spectral)</h3>
-      <p class="note">
-        Applies randomized spectral perturbations. WAV is processed losslessly in-page;
-        MP3 is decoded and re-encoded with ffmpeg.wasm (≈30&nbsp;MB, loaded once on first use)
-        and is therefore lossy.
-      </p>
-      <label class="intensity">
-        Intensity
-        <input id="intensity" type="range" min="0" max="1" step="0.05" value="0.2" />
-        <output id="intensity-out">0.20</output>
+      <h3>Process</h3>
+      <label class="mode">
+        Mode
+        <select id="mode">
+          ${MODE_ORDER.map((m) => `<option value="${m}">${escapeHtml(MODES[m].label)}</option>`).join('')}
+        </select>
       </label>
+      <p id="mode-desc" class="note"></p>
       <div class="buttons">
-        <button id="clean" type="button">Clean spectra &amp; download</button>
+        <button id="process" type="button">Process &amp; download</button>
         <button id="analyze" type="button">Analyze for watermarks</button>
       </div>
-      <p id="spectral-status" class="note" role="status"></p>
+      <p id="status" class="note" role="status"></p>
+      <div id="report-detail"></div>
       <div id="analysis"></div>
     </section>
   `;
 
-  wireStrip(el, name, bytes);
-  wireSpectral(el, name, bytes);
+  wireProcess(el, name, bytes);
 }
 
-function wireStrip(el: HTMLElement, name: string, bytes: Uint8Array): void {
-  const status = required<HTMLElement>(el, '#strip-status');
-  required<HTMLButtonElement>(el, '#strip').addEventListener('click', () => {
-    try {
-      const result = stripMetadata(bytes);
-      const outName = withSuffix(name, '.stripped');
-      downloadBytes(result.bytes, outName, mimeForName(name));
-      status.classList.remove('error');
-      status.textContent =
-        result.bytesRemoved > 0
-          ? `Removed ${formatBytes(result.bytesRemoved)} of metadata → ${escapeHtml(outName)} (${formatBytes(result.bytes.length)}).`
-          : `No metadata to remove — downloaded an exact copy as ${escapeHtml(outName)}.`;
-    } catch (err) {
-      status.classList.add('error');
-      status.textContent = `Could not strip metadata: ${message(err)}`;
-    }
-  });
-}
-
-function wireSpectral(el: HTMLElement, name: string, bytes: Uint8Array): void {
-  const intensity = required<HTMLInputElement>(el, '#intensity');
-  const intensityOut = required<HTMLOutputElement>(el, '#intensity-out');
-  const cleanBtn = required<HTMLButtonElement>(el, '#clean');
+function wireProcess(el: HTMLElement, name: string, bytes: Uint8Array): void {
+  const mode = required<HTMLSelectElement>(el, '#mode');
+  const modeDesc = required<HTMLElement>(el, '#mode-desc');
+  const processBtn = required<HTMLButtonElement>(el, '#process');
   const analyzeBtn = required<HTMLButtonElement>(el, '#analyze');
-  const status = required<HTMLElement>(el, '#spectral-status');
+  const status = required<HTMLElement>(el, '#status');
+  const detail = required<HTMLElement>(el, '#report-detail');
   const analysis = required<HTMLElement>(el, '#analysis');
 
-  intensity.addEventListener('input', () => {
-    intensityOut.textContent = Number(intensity.value).toFixed(2);
-  });
+  const selectedMode = (): ModeName => (isModeName(mode.value) ? mode.value : 'standard');
+  const syncDesc = (): void => {
+    modeDesc.textContent = MODES[selectedMode()].description;
+  };
+  mode.addEventListener('change', syncDesc);
+  syncDesc();
 
-  cleanBtn.addEventListener('click', () => {
-    void withBusy([cleanBtn, analyzeBtn], status, 'Processing…', async () => {
-      const result = await spectralCleanFile(bytes, { intensity: Number(intensity.value) });
-      const outName = withSuffix(name, '.cleaned');
+  processBtn.addEventListener('click', () => {
+    const chosen = selectedMode();
+    void withBusy([processBtn, analyzeBtn], status, `Processing (${chosen})…`, async () => {
+      const result = await processWithMode(bytes, chosen);
+      const outName = withSuffix(name, `.${chosen}`);
       downloadBytes(result.bytes, outName, mimeForName(name));
       status.classList.remove('error');
-      status.textContent = `Cleaned → ${escapeHtml(outName)} (${formatBytes(result.bytes.length)}, ${result.outputFormat.toUpperCase()}).`;
+      status.textContent = `${result.report.verification.passed ? 'Done' : 'Done (with warnings)'} → ${escapeHtml(outName)} (${formatBytes(result.bytes.length)}).`;
+      detail.innerHTML = renderForensicReport(result.report);
     });
   });
 
   analyzeBtn.addEventListener('click', () => {
-    void withBusy([cleanBtn, analyzeBtn], status, 'Analyzing…', async () => {
+    void withBusy([processBtn, analyzeBtn], status, 'Analyzing…', async () => {
       const perChannel = await analyzeFile(bytes);
       status.classList.remove('error');
       status.textContent = `Analyzed ${perChannel.length} channel(s).`;
@@ -170,6 +150,38 @@ function wireSpectral(el: HTMLElement, name: string, bytes: Uint8Array): void {
         .join('');
     });
   });
+}
+
+function renderForensicReport(report: ForensicReport): string {
+  const rows: Array<[string, string]> = [
+    ['Mode', report.mode],
+    ['Output', `${report.outputFormat.toUpperCase()} · ${formatBytes(report.outputSize)}`],
+    ['Lossless', report.lossless ? 'yes (audio preserved bit-for-bit)' : 'no'],
+    ['Metadata removed', `${formatBytes(report.metadata.bytesRemoved)}`],
+  ];
+  if (report.spectral) {
+    rows.push([
+      'Spectral',
+      `intensity ${report.spectral.intensity}, FFT ${report.spectral.fftSize}, ${report.spectral.passes} pass(es)`,
+    ]);
+  }
+  if (report.watermarksBefore.length > 0) {
+    const echoes = report.watermarksBefore
+      .map((a, ch) =>
+        a.echo.detected ? `ch${ch}: echo ${a.echo.lagMs.toFixed(0)}ms` : `ch${ch}: none`
+      )
+      .join(', ');
+    rows.push(['Watermarks (input)', echoes]);
+  }
+  rows.push([
+    'Verification',
+    `${report.verification.passed ? 'passed' : 'FAILED'} — ${escapeHtml(report.verification.notes.join(' '))}`,
+  ]);
+
+  const body = rows
+    .map(([k, v]) => `<tr><th scope="row">${escapeHtml(k)}</th><td>${v}</td></tr>`)
+    .join('');
+  return `<table class="report"><tbody>${body}</tbody></table>`;
 }
 
 /** Disable buttons and show a status while an async action runs. */

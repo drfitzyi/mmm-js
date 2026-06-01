@@ -45,11 +45,16 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
   has only been validated via the bundler, not run in a real browser. Needs a manual in-page test.
 - [ ] Consider moving DSP off the main thread (Web Worker) — see Phase 5; long files will block the UI today.
 
-## Phase 4 — Processing modes (match upstream behavior)
-- [ ] Standard mode — full analysis + sanitization.
-- [ ] Turbo mode — faster, metadata-preserving-where-safe variant (`PreservingSanitizer`).
-- [ ] Paranoid mode — maximum modification intensity.
-- [ ] Forensic verification — report what was removed/changed and confirm the result.
+## Phase 4 — Processing modes (match upstream behavior) ✅
+- [x] Mode presets: `metadata` (lossless), `turbo`, `standard`, `paranoid`. (`src/modes.ts`)
+- [x] Standard mode — balanced spectral disruption + metadata drop via re-encode.
+- [x] Turbo mode — light, small-FFT spectral pass (fast).
+- [x] Paranoid mode — aggressive multi-pass, large-FFT disruption.
+- [x] Forensic verification — `ForensicReport` (metadata removed, spectral params, watermarks-before,
+      re-parse residual check). (`src/sanitize/pipeline.ts`)
+- [x] `processWithMode` unified pipeline + UI mode selector rendering the report. (`src/sanitize/pipeline.ts`, `src/ui/app.ts`)
+- Note: multi-pass spectral runs in the PCM domain (one decode/encode); seeds vary per channel and per pass.
+- [ ] Browser verification of the MP3 spectral modes still pending (shared with Phase 3 — ffmpeg path).
 
 ## Phase 5 — Performance (keep the UI alive)
 - [ ] Move all DSP off the main thread into a **Web Worker**; stream progress back to the UI.
