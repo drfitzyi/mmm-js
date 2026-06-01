@@ -17,15 +17,23 @@ import coreURL from '@ffmpeg/core?url';
 import wasmURL from '@ffmpeg/core/wasm?url';
 
 export type LogHandler = (message: string) => void;
+export type ProgressHandler = (ratio: number) => void;
 
 let loading: Promise<FFmpeg> | null = null;
 
+// Listeners are attached to the FFmpeg instance exactly once (at load). They
+// forward to the handlers of the in-flight transcode via these refs, so we
+// never stack a new listener — and hold a stale closure — per call.
+let currentLog: LogHandler | undefined;
+let currentProgress: ProgressHandler | undefined;
+
 /** Lazily instantiate and load the ffmpeg.wasm core (memoized). */
-async function getFFmpeg(onLog?: LogHandler): Promise<FFmpeg> {
+async function getFFmpeg(): Promise<FFmpeg> {
   if (!loading) {
     loading = (async () => {
       const ffmpeg = new FFmpeg();
-      if (onLog) ffmpeg.on('log', ({ message }) => onLog(message));
+      ffmpeg.on('log', ({ message }) => currentLog?.(message));
+      ffmpeg.on('progress', ({ progress }) => currentProgress?.(progress));
       // Convert the bundled asset URLs to blob URLs so the internal worker can
       // import them without cross-origin restrictions.
       await ffmpeg.load({
@@ -45,7 +53,7 @@ export function isFFmpegLoading(): boolean {
 
 interface TranscodeOptions {
   onLog?: LogHandler;
-  onProgress?: (ratio: number) => void;
+  onProgress?: ProgressHandler;
 }
 
 /**
@@ -59,9 +67,9 @@ export async function transcode(
   args: string[],
   options: TranscodeOptions = {}
 ): Promise<Uint8Array> {
-  const ffmpeg = await getFFmpeg(options.onLog);
-  const progress = options.onProgress;
-  if (progress) ffmpeg.on('progress', ({ progress: ratio }) => progress(ratio));
+  const ffmpeg = await getFFmpeg();
+  currentLog = options.onLog;
+  currentProgress = options.onProgress;
 
   // ffmpeg.writeFile transfers the buffer to its worker, which DETACHES it in
   // the main thread. Hand over a throwaway copy so the caller's bytes (which the
@@ -77,6 +85,8 @@ export async function transcode(
   } finally {
     await ffmpeg.deleteFile(inputName).catch(() => undefined);
     await ffmpeg.deleteFile(outputName).catch(() => undefined);
+    currentLog = undefined;
+    currentProgress = undefined;
   }
 }
 
