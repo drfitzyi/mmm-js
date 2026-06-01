@@ -33,6 +33,8 @@ export function cleanWavSpectra(wavBytes: Uint8Array, options: WavCleanOptions =
       current = spectralClean(current, {
         ...options,
         seed,
+        // The WAV header is the source of truth for Hz-based ops (notch/band-limit).
+        sampleRate: pcm.sampleRate,
         // Map this (channel, pass) unit's 0..1 ratio into the global range.
         onProgress: onProgress
           ? (ratio) => onProgress((unitIndex + ratio) / totalUnits)

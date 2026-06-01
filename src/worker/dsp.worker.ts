@@ -17,9 +17,7 @@ ctx.onmessage = (event: MessageEvent<DspRequest>): void => {
   try {
     if (req.type === 'clean') {
       const cleaned = cleanWavSpectra(new Uint8Array(req.wav), {
-        intensity: req.settings.intensity,
-        fftSize: req.settings.fftSize,
-        passes: req.settings.passes,
+        ...req.settings,
         seed: req.seed,
         onProgress: (ratio) => post({ id: req.id, type: 'progress', ratio }),
       });

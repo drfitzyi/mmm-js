@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { detectEcho, spectralFlatness, analyzeWatermarks } from './watermark';
+import {
+  detectEcho,
+  spectralFlatness,
+  analyzeWatermarks,
+  statisticalAnomaly,
+  highFrequencyProfile,
+} from './watermark';
 import { createRng } from './prng';
 
 const SAMPLE_RATE = 8000;
@@ -54,10 +60,47 @@ describe('spectralFlatness', () => {
   });
 });
 
+describe('statisticalAnomaly', () => {
+  it('does not flag white noise', () => {
+    const result = statisticalAnomaly(noise(8192, 7));
+    expect(result.flagged).toBe(false);
+    expect(result.entropy).toBeGreaterThan(6);
+  });
+
+  it('flags a sparse, spiky signal (high kurtosis, low entropy)', () => {
+    const rng = createRng(8);
+    const x = new Float32Array(8192); // mostly zeros
+    for (let i = 0; i < x.length; i++) if (rng.next() < 0.01) x[i] = 0.9;
+    const result = statisticalAnomaly(x);
+    expect(result.flagged).toBe(true);
+    expect(result.excessKurtosis).toBeGreaterThan(2);
+  });
+});
+
+describe('highFrequencyProfile', () => {
+  const HI_SR = 44100;
+
+  it('flags a strong high-frequency tone', () => {
+    const x = new Float32Array(16384);
+    for (let i = 0; i < x.length; i++) x[i] = 0.5 * Math.sin((2 * Math.PI * 18000 * i) / HI_SR);
+    const result = highFrequencyProfile(x, HI_SR);
+    expect(result.suspectPeaks).toBeGreaterThan(0);
+    expect(result.flagged).toBe(true);
+  });
+
+  it('stays quiet on a low-frequency tone', () => {
+    const x = new Float32Array(16384);
+    for (let i = 0; i < x.length; i++) x[i] = 0.5 * Math.sin((2 * Math.PI * 440 * i) / HI_SR);
+    expect(highFrequencyProfile(x, HI_SR).flagged).toBe(false);
+  });
+});
+
 describe('analyzeWatermarks', () => {
-  it('bundles echo and flatness results', () => {
+  it('bundles all heuristics', () => {
     const result = analyzeWatermarks(noise(8192, 4), SAMPLE_RATE);
     expect(result.echo).toHaveProperty('detected');
     expect(result.spectralFlatness).toBeGreaterThan(0);
+    expect(result.statistics).toHaveProperty('flagged');
+    expect(result.highFrequency).toHaveProperty('flagged');
   });
 });

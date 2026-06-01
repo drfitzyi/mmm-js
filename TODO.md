@@ -49,8 +49,17 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 Per-bin spectral magnitude/phase jitter does **not** defeat acoustic fingerprinting (verified: a
 paranoid-mode song was still recognized by songfinder.gg) — matchers key on spectral-peak constellations
 and ignore phase. The effective breaker is a **pitch shift** (a few %, audible), done via ffmpeg. So all
-modes except `metadata` now pitch-shift (lossy, require ffmpeg even for WAV); the spectral jitter is a
-subtle extra in paranoid only.
+modes except `metadata` now warp pitch (lossy, require ffmpeg even for WAV).
+
+After comparing with upstream `geeknik/mmm`, added parity techniques:
+- **Tempo change** (ffmpeg `atempo`) — second recognition-breaker (paranoid uses ~−3%). (`audio/ffmpeg.ts` warp)
+- **DSP spectral surgery**: band-limiting (HP/LP), sync-tone notches, HF watermark attenuation, and
+  strong phase randomization. (`dsp/spectral.ts`; standard = notches + HF, paranoid = all of it)
+- **Expanded watermark detection**: statistical (kurtosis/entropy) + high-frequency spread-spectrum
+  profile, alongside the existing cepstrum echo + spectral flatness. (`dsp/watermark.ts`)
+
+Still not ported from upstream: FLAC input, multiband noise injection, "human imperfections"
+(micro-timing/harmonic), full 0–2π phase randomization (we cap at the `phaseRandom` knob).
 
 ## Phase 4 — Processing modes (match upstream behavior) ✅
 - [x] Mode presets: `metadata` (lossless), `turbo`, `standard`, `paranoid`. (`src/modes.ts`)

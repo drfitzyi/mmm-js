@@ -225,8 +225,14 @@ function wireProcess(el: HTMLElement, name: string, bytes: Uint8Array): void {
         .map((a, ch) => {
           const echo = a.echo.detected
             ? `echo at ${a.echo.lagMs.toFixed(1)} ms (strength ${a.echo.strength.toFixed(1)})`
-            : 'no echo detected';
-          return `<p class="note">Channel ${ch}: ${echo}; spectral flatness ${a.spectralFlatness.toFixed(3)}.</p>`;
+            : 'no echo';
+          const stats = a.statistics.flagged
+            ? `statistical anomaly (entropy ${a.statistics.entropy.toFixed(1)}, kurtosis ${a.statistics.excessKurtosis.toFixed(1)})`
+            : 'stats normal';
+          const hf = a.highFrequency.flagged
+            ? `${a.highFrequency.suspectPeaks} HF peak(s) >15 kHz`
+            : 'no HF marks';
+          return `<p class="note">Channel ${ch}: ${echo}; flatness ${a.spectralFlatness.toFixed(3)}; ${stats}; ${hf}.</p>`;
         })
         .join('');
     });
@@ -240,8 +246,11 @@ function renderForensicReport(report: ForensicReport): string {
     ['Lossless', report.lossless ? 'yes (audio preserved bit-for-bit)' : 'no'],
     ['Metadata removed', `${formatBytes(report.metadata.bytesRemoved)}`],
   ];
-  if (report.pitchPercent > 0) {
+  if (report.pitchPercent !== 0) {
     rows.push(['Pitch shift', `~${report.pitchPercent}% (breaks acoustic fingerprints)`]);
+  }
+  if (report.tempoPercent !== 0) {
+    rows.push(['Tempo change', `~${report.tempoPercent}%`]);
   }
   if (report.spectral) {
     rows.push([

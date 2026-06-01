@@ -115,64 +115,65 @@ export function encodeMp3(
 }
 
 /**
- * Build an ffmpeg filter that shifts pitch up by `ratio` while preserving tempo:
- * resample faster (raises pitch + tempo), restore the sample rate, then slow the
- * tempo back down. A small shift (a few percent) is enough to move spectral
- * content off the positions acoustic fingerprinters key on.
+ * Build an ffmpeg filter that shifts pitch by `pitchRatio` and tempo by
+ * `tempoRatio` (both relative to the original; 1 = unchanged):
+ *
+ *   asetrate raises pitch AND tempo by pitchRatio → aresample restores the rate
+ *   → a single atempo corrects to the desired net tempo (tempoRatio/pitchRatio).
+ *
+ * A pitch shift moves all spectral content; a tempo change alters the
+ * time-frequency geometry fingerprints depend on. Returns '' when there's
+ * nothing to do.
  */
-function pitchFilter(sampleRate: number, ratio: number): string {
-  const target = Math.round(sampleRate * ratio);
-  const tempo = (1 / ratio).toFixed(6);
-  return `asetrate=${target},aresample=${sampleRate},atempo=${tempo}`;
+function warpFilter(sampleRate: number, pitchRatio: number, tempoRatio: number): string {
+  const parts: string[] = [];
+  if (Math.abs(pitchRatio - 1) > 1e-9) {
+    parts.push(`asetrate=${Math.round(sampleRate * pitchRatio)}`, `aresample=${sampleRate}`);
+  }
+  const netTempo = tempoRatio / pitchRatio;
+  if (Math.abs(netTempo - 1) > 1e-9) {
+    parts.push(`atempo=${netTempo.toFixed(6)}`);
+  }
+  return parts.join(',');
 }
 
-/** Pitch-shift a WAV and return a WAV (16-bit PCM). */
-export function pitchShiftToWav(
+function withFilter(filter: string, codecArgs: string[]): string[] {
+  return filter ? ['-af', filter, ...codecArgs] : codecArgs;
+}
+
+/** Pitch/tempo-warp a WAV and return a WAV (16-bit PCM). */
+export function warpToWav(
   wav: Uint8Array,
   sampleRate: number,
-  ratio: number,
+  pitchRatio: number,
+  tempoRatio: number,
   options?: TranscodeOptions
 ): Promise<Uint8Array> {
+  const filter = warpFilter(sampleRate, pitchRatio, tempoRatio);
   return transcode(
     wav,
-    'pitch-in.wav',
-    'pitch-out.wav',
-    [
-      '-af',
-      pitchFilter(sampleRate, ratio),
-      '-map_metadata',
-      '-1',
-      '-flags',
-      '+bitexact',
-      '-c:a',
-      'pcm_s16le',
-    ],
+    'warp-in.wav',
+    'warp-out.wav',
+    withFilter(filter, ['-map_metadata', '-1', '-flags', '+bitexact', '-c:a', 'pcm_s16le']),
     options
   );
 }
 
-/** Pitch-shift a WAV and encode the result to MP3. */
-export function pitchShiftToMp3(
+/** Pitch/tempo-warp a WAV and encode the result to MP3. */
+export function warpToMp3(
   wav: Uint8Array,
   sampleRate: number,
-  ratio: number,
+  pitchRatio: number,
+  tempoRatio: number,
   quality = 2,
   options?: TranscodeOptions
 ): Promise<Uint8Array> {
+  const filter = warpFilter(sampleRate, pitchRatio, tempoRatio);
   return transcode(
     wav,
-    'pitch-in.wav',
-    'pitch-out.mp3',
-    [
-      '-af',
-      pitchFilter(sampleRate, ratio),
-      '-map_metadata',
-      '-1',
-      '-c:a',
-      'libmp3lame',
-      '-q:a',
-      String(quality),
-    ],
+    'warp-in.wav',
+    'warp-out.mp3',
+    withFilter(filter, ['-map_metadata', '-1', '-c:a', 'libmp3lame', '-q:a', String(quality)]),
     options
   );
 }

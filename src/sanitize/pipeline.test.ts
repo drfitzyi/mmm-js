@@ -20,8 +20,8 @@ function toneWav(length: number, freq: number, sampleRate: number, seed: number)
 const passthroughCodec: Codec = {
   decodeToWav: async (input) => input,
   encodeMp3: async (wav) => wav,
-  pitchToWav: async (wav) => wav,
-  pitchToMp3: async (wav) => wav,
+  warpToWav: async (wav) => wav,
+  warpToMp3: async (wav) => wav,
 };
 
 describe('modes presets', () => {
@@ -76,7 +76,7 @@ describe('processWithMode — lossy modes (pitch / spectral)', () => {
 
     expect(out.report.lossless).toBe(false);
     expect(out.report.pitchPercent).toBe(MODES.standard.pitchPercent);
-    expect(out.report.spectral).toBeNull();
+    expect(out.report.spectral).toEqual(MODES.standard.spectral);
     expect(out.report.watermarksBefore.length).toBe(1);
     expect(out.report.verification.residualMetadataBytes).toBe(0);
     expect(out.report.verification.passed).toBe(true);

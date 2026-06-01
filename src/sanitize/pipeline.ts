@@ -23,13 +23,7 @@ export interface DspRunner {
 const inProcessRunner: DspRunner = {
   clean: (wav, settings, opts) =>
     Promise.resolve(
-      cleanWavSpectra(wav, {
-        intensity: settings.intensity,
-        fftSize: settings.fftSize,
-        passes: settings.passes,
-        seed: opts.seed,
-        onProgress: opts.onProgress,
-      })
+      cleanWavSpectra(wav, { ...settings, seed: opts.seed, onProgress: opts.onProgress })
     ),
   analyze: (wav) => Promise.resolve(analyzeWavWatermarks(wav)),
 };
@@ -41,11 +35,17 @@ const inProcessRunner: DspRunner = {
 export interface Codec {
   decodeToWav(input: Uint8Array, name: string): Promise<Uint8Array>;
   encodeMp3(wav: Uint8Array, quality: number): Promise<Uint8Array>;
-  pitchToWav(wav: Uint8Array, sampleRate: number, ratio: number): Promise<Uint8Array>;
-  pitchToMp3(
+  warpToWav(
     wav: Uint8Array,
     sampleRate: number,
-    ratio: number,
+    pitchRatio: number,
+    tempoRatio: number
+  ): Promise<Uint8Array>;
+  warpToMp3(
+    wav: Uint8Array,
+    sampleRate: number,
+    pitchRatio: number,
+    tempoRatio: number,
     quality: number
   ): Promise<Uint8Array>;
 }
@@ -55,10 +55,10 @@ export interface Codec {
 const ffmpegCodec: Codec = {
   decodeToWav: async (input, name) => (await import('../audio/ffmpeg')).decodeToWav(input, name),
   encodeMp3: async (wav, quality) => (await import('../audio/ffmpeg')).encodeMp3(wav, quality),
-  pitchToWav: async (wav, sampleRate, ratio) =>
-    (await import('../audio/ffmpeg')).pitchShiftToWav(wav, sampleRate, ratio),
-  pitchToMp3: async (wav, sampleRate, ratio, quality) =>
-    (await import('../audio/ffmpeg')).pitchShiftToMp3(wav, sampleRate, ratio, quality),
+  warpToWav: async (wav, sampleRate, pitchRatio, tempoRatio) =>
+    (await import('../audio/ffmpeg')).warpToWav(wav, sampleRate, pitchRatio, tempoRatio),
+  warpToMp3: async (wav, sampleRate, pitchRatio, tempoRatio, quality) =>
+    (await import('../audio/ffmpeg')).warpToMp3(wav, sampleRate, pitchRatio, tempoRatio, quality),
 };
 
 export interface PipelineOptions {
@@ -89,7 +89,9 @@ export interface ForensicReport {
   };
   /** Pitch shift applied, in percent (0 = none). The primary fingerprint-breaker. */
   pitchPercent: number;
-  /** Extra spectral perturbation applied, or null. */
+  /** Tempo change applied, in percent (0 = none, negative = slower). */
+  tempoPercent: number;
+  /** Extra spectral surgery/perturbation applied, or null. */
   spectral: SpectralSettings | null;
   /** Per-channel watermark analysis of the input (lossy modes only). */
   watermarksBefore: WatermarkAnalysis[];
@@ -160,6 +162,7 @@ export async function processWithMode(
           bytesRemoved: strip.bytesRemoved,
         },
         pitchPercent: 0,
+        tempoPercent: 0,
         spectral: null,
         watermarksBefore: [],
         verification: {
@@ -175,9 +178,11 @@ export async function processWithMode(
     };
   }
 
-  // --- Lossy modes (pitch shift, optional spectral perturbation) -----------
+  // --- Lossy modes (pitch/tempo warp, optional spectral surgery) -----------
   const quality = options.mp3Quality ?? 2;
-  const ratio = 1 + mode.pitchPercent / 100;
+  const pitchRatio = 1 + mode.pitchPercent / 100;
+  const tempoRatio = 1 + mode.tempoPercent / 100;
+  const hasWarp = mode.pitchPercent !== 0 || mode.tempoPercent !== 0;
 
   // A WAV representation to analyse and process.
   const wav = format === 'wav' ? bytes : await codec.decodeToWav(bytes, 'input.mp3');
@@ -188,15 +193,16 @@ export async function processWithMode(
     ? await runner.clean(wav, mode.spectral, { seed: options.seed, onProgress: options.onProgress })
     : wav;
 
-  // Pitch shift (and, for MP3, encode) via the codec.
+  // Pitch/tempo warp (and, for MP3, encode) via the codec.
   let raw: Uint8Array;
   if (format === 'wav') {
-    raw = mode.pitchPercent > 0 ? await codec.pitchToWav(perturbed, sampleRate, ratio) : perturbed;
+    raw = hasWarp
+      ? await codec.warpToWav(perturbed, sampleRate, pitchRatio, tempoRatio)
+      : perturbed;
   } else {
-    raw =
-      mode.pitchPercent > 0
-        ? await codec.pitchToMp3(perturbed, sampleRate, ratio, quality)
-        : await codec.encodeMp3(perturbed, quality);
+    raw = hasWarp
+      ? await codec.warpToMp3(perturbed, sampleRate, pitchRatio, tempoRatio, quality)
+      : await codec.encodeMp3(perturbed, quality);
   }
 
   // Guarantee a tag-free output regardless of what the encoder wrote.
@@ -204,9 +210,9 @@ export async function processWithMode(
   const residual = metadataByteCount(parseAudio(outBytes));
 
   const notes: string[] = [];
-  if (mode.pitchPercent > 0)
-    notes.push(`Pitch shifted ~${mode.pitchPercent}% (audible key change).`);
-  if (mode.spectral) notes.push('Spectral perturbation applied.');
+  if (mode.pitchPercent !== 0) notes.push(`Pitch shifted ~${mode.pitchPercent}%.`);
+  if (mode.tempoPercent !== 0) notes.push(`Tempo changed ~${mode.tempoPercent}%.`);
+  if (mode.spectral) notes.push('Spectral surgery applied.');
   notes.push(
     residual === 0 ? 'Output is metadata-free.' : `Output still has ${residual} bytes of metadata.`
   );
@@ -224,6 +230,7 @@ export async function processWithMode(
       lossless: false,
       metadata: { removed: inputMetaRegions, bytesRemoved: inputMetaBytes },
       pitchPercent: mode.pitchPercent,
+      tempoPercent: mode.tempoPercent,
       spectral: mode.spectral,
       watermarksBefore,
       verification: {
