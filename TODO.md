@@ -32,12 +32,18 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] Verify: re-parse output and assert zero residual metadata (built into `stripMetadata` as a safety net + tested).
 - [x] Wire "Strip metadata & download" into the UI with bytes-removed feedback. (`src/ui/app.ts`)
 
-## Phase 3 — Spectral analysis & modification (Web Audio / DSP)
-- [ ] Decode audio to PCM samples via `AudioContext.decodeAudioData` (or a WASM decoder for fidelity).
-- [ ] Implement FFT-based analysis using `OfflineAudioContext` / a WASM FFT lib.
-- [ ] Port `SpectralCleaner`: frequency-domain modifications / fingerprint disruption.
-- [ ] Port `WatermarkDetector`: spread-spectrum, echo-based, and statistical detection methods.
-- [ ] Re-encode modified PCM back to WAV (lossless) and MP3 (via a WASM encoder, e.g. lamejs/libmp3lame-wasm).
+## Phase 3 — Spectral analysis & modification (Web Audio / DSP) ✅
+- [x] Decode audio to PCM: WAV in pure TS (`src/audio/pcm.ts`); MP3 via ffmpeg.wasm (`src/audio/ffmpeg.ts`).
+- [x] Own FFT/STFT in pure TS — no Web Audio dependency, fully unit-tested. (`src/dsp/fft.ts`, `src/dsp/stft.ts`)
+- [x] Port `SpectralCleaner`: symmetry-preserving magnitude/phase jitter (fingerprint disruption). (`src/dsp/spectral.ts`)
+- [x] Port `WatermarkDetector`: cepstrum echo detection + spectral-flatness statistic. (`src/dsp/watermark.ts`)
+- [x] Re-encode to WAV (lossless, pure) and MP3 (ffmpeg.wasm + libmp3lame). (`src/audio/pcm.ts`, `src/audio/ffmpeg.ts`)
+- [x] Format-aware pipeline + UI controls (intensity slider, clean, analyze). (`src/sanitize/process.ts`, `src/ui/app.ts`)
+- **Decision:** use ffmpeg.wasm **single-threaded** core (`@ffmpeg/core`) — the MT core needs SharedArrayBuffer
+  (COOP/COEP headers) which GitHub Pages can't set. Core is GPL-2.0 and lazy-loaded (~30 MB) only on MP3 use.
+- [ ] **Browser verification pending**: the ffmpeg MP3 decode→clean→encode round-trip is typed + builds, but
+  has only been validated via the bundler, not run in a real browser. Needs a manual in-page test.
+- [ ] Consider moving DSP off the main thread (Web Worker) — see Phase 5; long files will block the UI today.
 
 ## Phase 4 — Processing modes (match upstream behavior)
 - [ ] Standard mode — full analysis + sanitization.

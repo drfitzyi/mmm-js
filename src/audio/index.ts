@@ -8,6 +8,8 @@ export { parseWav, buildWav, chunkKind } from './wav';
 export type { WavFile, WavChunk } from './wav';
 export { parseMp3 } from './mp3';
 export type { Mp3File } from './mp3';
+export { decodeWavPcm, encodeWavPcm } from './pcm';
+export type { PcmAudio } from './pcm';
 export { metadataByteCount } from './types';
 export type { AudioFormat, AudioInfo, Region, RegionKind } from './types';
 

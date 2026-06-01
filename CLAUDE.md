@@ -55,6 +55,36 @@ When mapping upstream Python modules (`AudioSanitizer`, `PreservingSanitizer`/tu
 `WatermarkDetector`, `SpectralCleaner`, `MetadataCleaner`) into JS, preserve the layered design:
 UI → core processing → detection modules → sanitization modules.
 
+## Code map (current)
+
+Source is layered so the heavy logic stays pure and unit-testable in Node; only the codec bridge and
+download touch browser APIs.
+
+- `src/audio/` — container layer. `format.ts` (magic-byte detection), `wav.ts` (RIFF chunk parse +
+  `buildWav` writer), `mp3.ts` (ID3v2/APEv2/ID3v1 tag-region locator), `pcm.ts` (WAV↔Float32 PCM codec),
+  `binary.ts` (`ByteReader`). `index.ts` re-exports + `parseAudio` dispatcher. Unified `Region` model
+  (`header`/`audio`/`metadata`) in `types.ts`.
+- `src/dsp/` — **pure DSP, no browser deps.** `fft.ts` (radix-2 FFT), `window.ts` (Hann), `stft.ts`
+  (overlap-add STFT with a per-frame transform callback), `spectral.ts` (`SpectralCleaner` — Hermitian-
+  symmetry-preserving jitter), `watermark.ts` (cepstrum echo detector + spectral flatness), `prng.ts`
+  (seeded mulberry32 so output is reproducible/testable).
+- `src/sanitize/` — orchestration. `metadata.ts` (lossless tag stripping), `spectral.ts` (pure WAV
+  clean/analyze), `process.ts` (format-aware: WAV pure, MP3 via ffmpeg.wasm).
+- `src/audio/ffmpeg.ts` — **browser-only** ffmpeg.wasm bridge (decode/encode). Dynamically imported so
+  the ~30 MB core is lazy. Cannot be exercised under Vitest.
+- `src/io/` — `file.ts` (read File→bytes), `download.ts` (Blob + object URL). `src/ui/app.ts` — the UI.
+
+Conventions: `noUncheckedIndexedAccess` is on, so typed-array indexing returns `number | undefined` —
+cache reads into locals with `!` in DSP hot loops (see `fft.ts`). Keep new heavy logic in `dsp`/`audio`
+as pure functions over `Float32Array`/`Uint8Array` and add Vitest coverage; keep browser-only glue thin.
+
+## ffmpeg.wasm
+
+Used only as the MP3 codec bridge — **metadata stripping never routes through it** (that path is
+lossless byte-surgery). Must stay on the **single-threaded** `@ffmpeg/core` (no SharedArrayBuffer), since
+GitHub Pages cannot send the COOP/COEP headers the multi-threaded core requires. The core is **GPL-2.0**,
+which affects how the deployed bundle may be licensed/distributed.
+
 ## Reference
 
 - Upstream Python implementation: https://github.com/geeknik/mmm — consult it for algorithm details

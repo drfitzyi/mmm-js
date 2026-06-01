@@ -3,6 +3,7 @@ import { downloadBytes, mimeForName } from '../io/download';
 import { parseAudio, metadataByteCount } from '../audio';
 import type { AudioInfo } from '../audio';
 import { stripMetadata } from '../sanitize/metadata';
+import { spectralCleanFile, analyzeFile } from '../sanitize/process';
 
 /** Mount the (Phase 1) intake UI into the given root element. */
 export function mountApp(root: HTMLElement): void {
@@ -81,10 +82,39 @@ function renderReport(el: HTMLElement, name: string, bytes: Uint8Array, info: Au
       <thead><tr><th>Region</th><th>Kind</th><th class="num">Size</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <button id="strip" type="button">Strip metadata &amp; download</button>
-    <p id="strip-status" class="note" role="status"></p>
+    <section class="action">
+      <h3>Strip metadata</h3>
+      <p class="note">Lossless: removes tags, keeps the audio bit-for-bit.</p>
+      <button id="strip" type="button">Strip metadata &amp; download</button>
+      <p id="strip-status" class="note" role="status"></p>
+    </section>
+
+    <section class="action">
+      <h3>Disrupt fingerprints (spectral)</h3>
+      <p class="note">
+        Applies randomized spectral perturbations. WAV is processed losslessly in-page;
+        MP3 is decoded and re-encoded with ffmpeg.wasm (≈30&nbsp;MB, loaded once on first use)
+        and is therefore lossy.
+      </p>
+      <label class="intensity">
+        Intensity
+        <input id="intensity" type="range" min="0" max="1" step="0.05" value="0.2" />
+        <output id="intensity-out">0.20</output>
+      </label>
+      <div class="buttons">
+        <button id="clean" type="button">Clean spectra &amp; download</button>
+        <button id="analyze" type="button">Analyze for watermarks</button>
+      </div>
+      <p id="spectral-status" class="note" role="status"></p>
+      <div id="analysis"></div>
+    </section>
   `;
 
+  wireStrip(el, name, bytes);
+  wireSpectral(el, name, bytes);
+}
+
+function wireStrip(el: HTMLElement, name: string, bytes: Uint8Array): void {
   const status = required<HTMLElement>(el, '#strip-status');
   required<HTMLButtonElement>(el, '#strip').addEventListener('click', () => {
     try {
@@ -98,9 +128,72 @@ function renderReport(el: HTMLElement, name: string, bytes: Uint8Array, info: Au
           : `No metadata to remove — downloaded an exact copy as ${escapeHtml(outName)}.`;
     } catch (err) {
       status.classList.add('error');
-      status.textContent = `Could not strip metadata: ${err instanceof Error ? err.message : String(err)}`;
+      status.textContent = `Could not strip metadata: ${message(err)}`;
     }
   });
+}
+
+function wireSpectral(el: HTMLElement, name: string, bytes: Uint8Array): void {
+  const intensity = required<HTMLInputElement>(el, '#intensity');
+  const intensityOut = required<HTMLOutputElement>(el, '#intensity-out');
+  const cleanBtn = required<HTMLButtonElement>(el, '#clean');
+  const analyzeBtn = required<HTMLButtonElement>(el, '#analyze');
+  const status = required<HTMLElement>(el, '#spectral-status');
+  const analysis = required<HTMLElement>(el, '#analysis');
+
+  intensity.addEventListener('input', () => {
+    intensityOut.textContent = Number(intensity.value).toFixed(2);
+  });
+
+  cleanBtn.addEventListener('click', () => {
+    void withBusy([cleanBtn, analyzeBtn], status, 'Processing…', async () => {
+      const result = await spectralCleanFile(bytes, { intensity: Number(intensity.value) });
+      const outName = withSuffix(name, '.cleaned');
+      downloadBytes(result.bytes, outName, mimeForName(name));
+      status.classList.remove('error');
+      status.textContent = `Cleaned → ${escapeHtml(outName)} (${formatBytes(result.bytes.length)}, ${result.outputFormat.toUpperCase()}).`;
+    });
+  });
+
+  analyzeBtn.addEventListener('click', () => {
+    void withBusy([cleanBtn, analyzeBtn], status, 'Analyzing…', async () => {
+      const perChannel = await analyzeFile(bytes);
+      status.classList.remove('error');
+      status.textContent = `Analyzed ${perChannel.length} channel(s).`;
+      analysis.innerHTML = perChannel
+        .map((a, ch) => {
+          const echo = a.echo.detected
+            ? `echo at ${a.echo.lagMs.toFixed(1)} ms (strength ${a.echo.strength.toFixed(1)})`
+            : 'no echo detected';
+          return `<p class="note">Channel ${ch}: ${echo}; spectral flatness ${a.spectralFlatness.toFixed(3)}.</p>`;
+        })
+        .join('');
+    });
+  });
+}
+
+/** Disable buttons and show a status while an async action runs. */
+async function withBusy(
+  buttons: HTMLButtonElement[],
+  status: HTMLElement,
+  busyText: string,
+  action: () => Promise<void>
+): Promise<void> {
+  for (const b of buttons) b.disabled = true;
+  status.classList.remove('error');
+  status.textContent = busyText;
+  try {
+    await action();
+  } catch (err) {
+    status.classList.add('error');
+    status.textContent = `Failed: ${message(err)}`;
+  } finally {
+    for (const b of buttons) b.disabled = false;
+  }
+}
+
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Insert `suffix` before the file extension: ("song.mp3", ".stripped") → "song.stripped.mp3". */
