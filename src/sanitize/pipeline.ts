@@ -6,12 +6,41 @@ import { MODES } from '../modes';
 import type { ModeName, SpectralSettings } from '../modes';
 import type { WatermarkAnalysis } from '../dsp/watermark';
 
+/**
+ * Strategy for running the heavy DSP. The default runs in-process (used by
+ * tests and as a fallback); the UI injects a Web Worker-backed runner so the
+ * main thread stays responsive.
+ */
+export interface DspRunner {
+  clean(
+    wav: Uint8Array,
+    settings: SpectralSettings,
+    opts: { seed?: number; onProgress?: (ratio: number) => void }
+  ): Promise<Uint8Array>;
+  analyze(wav: Uint8Array): Promise<WatermarkAnalysis[]>;
+}
+
+const inProcessRunner: DspRunner = {
+  clean: (wav, settings, opts) =>
+    Promise.resolve(
+      cleanWavSpectra(wav, {
+        intensity: settings.intensity,
+        fftSize: settings.fftSize,
+        passes: settings.passes,
+        seed: opts.seed,
+        onProgress: opts.onProgress,
+      })
+    ),
+  analyze: (wav) => Promise.resolve(analyzeWavWatermarks(wav)),
+};
+
 export interface PipelineOptions {
   /** Base seed for spectral jitter (reproducible output). */
   seed?: number;
   /** libmp3lame quality for MP3 output (0 best … 9). */
   mp3Quality?: number;
   onLog?: (message: string) => void;
+  /** DSP progress, 0..1. */
   onProgress?: (ratio: number) => void;
 }
 
@@ -65,7 +94,8 @@ export interface ProcessOutput {
 export async function processWithMode(
   bytes: Uint8Array,
   modeName: ModeName,
-  options: PipelineOptions = {}
+  options: PipelineOptions = {},
+  runner: DspRunner = inProcessRunner
 ): Promise<ProcessOutput> {
   const mode = MODES[modeName];
   const format = detectFormat(bytes);
@@ -110,7 +140,10 @@ export async function processWithMode(
   }
 
   // --- Spectral modes -------------------------------------------------------
-  const bridge = { onLog: options.onLog, onProgress: options.onProgress };
+  // ffmpeg compute already runs in its own worker, so we don't route its
+  // progress to onProgress — that's reserved for the DSP stage (the bar's
+  // meaningful 0..1). ffmpeg phases just show as "busy" in the UI.
+  const bridge = { onLog: options.onLog };
 
   // Get a WAV representation to analyse and process.
   let wav: Uint8Array;
@@ -121,12 +154,10 @@ export async function processWithMode(
     wav = await decodeToWav(bytes, 'input.mp3', bridge);
   }
 
-  const watermarksBefore = analyzeWavWatermarks(wav);
-  const cleanedWav = cleanWavSpectra(wav, {
-    intensity: mode.spectral.intensity,
-    fftSize: mode.spectral.fftSize,
-    passes: mode.spectral.passes,
+  const watermarksBefore = await runner.analyze(wav);
+  const cleanedWav = await runner.clean(wav, mode.spectral, {
     seed: options.seed,
+    onProgress: options.onProgress,
   });
 
   let outBytes: Uint8Array;

@@ -21,15 +21,29 @@ export function cleanWavSpectra(wavBytes: Uint8Array, options: WavCleanOptions =
   const baseSeed = options.seed ?? 0x9e3779b9;
   const pcm = decodeWavPcm(wavBytes);
 
+  const onProgress = options.onProgress;
+  const totalUnits = Math.max(1, pcm.channels.length * passes);
+  let unit = 0;
+
   const channels = pcm.channels.map((channel, index) => {
     let current = channel;
     for (let pass = 0; pass < passes; pass++) {
       const seed = (baseSeed + index * 7919 + pass * 104729) >>> 0;
-      current = spectralClean(current, { ...options, seed });
+      const unitIndex = unit;
+      current = spectralClean(current, {
+        ...options,
+        seed,
+        // Map this (channel, pass) unit's 0..1 ratio into the global range.
+        onProgress: onProgress
+          ? (ratio) => onProgress((unitIndex + ratio) / totalUnits)
+          : undefined,
+      });
+      unit += 1;
     }
     return current;
   });
 
+  if (onProgress) onProgress(1);
   return encodeWavPcm({ sampleRate: pcm.sampleRate, channels });
 }
 

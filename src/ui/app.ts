@@ -7,6 +7,7 @@ import { processWithMode } from '../sanitize/pipeline';
 import type { ForensicReport } from '../sanitize/pipeline';
 import { MODES, MODE_ORDER, isModeName } from '../modes';
 import type { ModeName } from '../modes';
+import { DspWorkerClient } from '../worker/client';
 
 /** Mount the (Phase 1) intake UI into the given root element. */
 export function mountApp(root: HTMLElement): void {
@@ -97,7 +98,9 @@ function renderReport(el: HTMLElement, name: string, bytes: Uint8Array, info: Au
       <div class="buttons">
         <button id="process" type="button">Process &amp; download</button>
         <button id="analyze" type="button">Analyze for watermarks</button>
+        <button id="cancel" type="button" hidden>Cancel</button>
       </div>
+      <progress id="progress" max="1" value="0" hidden></progress>
       <p id="status" class="note" role="status"></p>
       <div id="report-detail"></div>
       <div id="analysis"></div>
@@ -112,9 +115,14 @@ function wireProcess(el: HTMLElement, name: string, bytes: Uint8Array): void {
   const modeDesc = required<HTMLElement>(el, '#mode-desc');
   const processBtn = required<HTMLButtonElement>(el, '#process');
   const analyzeBtn = required<HTMLButtonElement>(el, '#analyze');
+  const cancelBtn = required<HTMLButtonElement>(el, '#cancel');
+  const progress = required<HTMLProgressElement>(el, '#progress');
   const status = required<HTMLElement>(el, '#status');
   const detail = required<HTMLElement>(el, '#report-detail');
   const analysis = required<HTMLElement>(el, '#analysis');
+
+  // One worker client per file view; the heavy DSP runs off the main thread.
+  const dsp = new DspWorkerClient();
 
   const selectedMode = (): ModeName => (isModeName(mode.value) ? mode.value : 'standard');
   const syncDesc = (): void => {
@@ -123,15 +131,30 @@ function wireProcess(el: HTMLElement, name: string, bytes: Uint8Array): void {
   mode.addEventListener('change', syncDesc);
   syncDesc();
 
+  cancelBtn.addEventListener('click', () => dsp.cancel());
+
   processBtn.addEventListener('click', () => {
     const chosen = selectedMode();
+    progress.value = 0;
+    progress.hidden = false;
+    cancelBtn.hidden = false;
     void withBusy([processBtn, analyzeBtn], status, `Processing (${chosen})…`, async () => {
-      const result = await processWithMode(bytes, chosen);
-      const outName = withSuffix(name, `.${chosen}`);
-      downloadBytes(result.bytes, outName, mimeForName(name));
-      status.classList.remove('error');
-      status.textContent = `${result.report.verification.passed ? 'Done' : 'Done (with warnings)'} → ${escapeHtml(outName)} (${formatBytes(result.bytes.length)}).`;
-      detail.innerHTML = renderForensicReport(result.report);
+      try {
+        const result = await processWithMode(
+          bytes,
+          chosen,
+          { onProgress: (ratio) => (progress.value = ratio) },
+          dsp
+        );
+        const outName = withSuffix(name, `.${chosen}`);
+        downloadBytes(result.bytes, outName, mimeForName(name));
+        status.classList.remove('error');
+        status.textContent = `${result.report.verification.passed ? 'Done' : 'Done (with warnings)'} → ${escapeHtml(outName)} (${formatBytes(result.bytes.length)}).`;
+        detail.innerHTML = renderForensicReport(result.report);
+      } finally {
+        progress.hidden = true;
+        cancelBtn.hidden = true;
+      }
     });
   });
 
@@ -197,8 +220,14 @@ async function withBusy(
   try {
     await action();
   } catch (err) {
-    status.classList.add('error');
-    status.textContent = `Failed: ${message(err)}`;
+    const msg = message(err);
+    if (msg === 'Cancelled') {
+      status.classList.remove('error');
+      status.textContent = 'Cancelled.';
+    } else {
+      status.classList.add('error');
+      status.textContent = `Failed: ${msg}`;
+    }
   } finally {
     for (const b of buttons) b.disabled = false;
   }

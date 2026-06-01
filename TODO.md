@@ -56,10 +56,16 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - Note: multi-pass spectral runs in the PCM domain (one decode/encode); seeds vary per channel and per pass.
 - [ ] Browser verification of the MP3 spectral modes still pending (shared with Phase 3 — ffmpeg path).
 
-## Phase 5 — Performance (keep the UI alive)
-- [ ] Move all DSP off the main thread into a **Web Worker**; stream progress back to the UI.
-- [ ] Use transferable `ArrayBuffer`s to avoid copies between worker and main thread.
-- [ ] Show progress + cancel for long-running jobs (upstream ~70s for a 3.5-min MP3 — expect long waits).
+## Phase 5 — Performance (keep the UI alive) ✅
+- [x] Move the heavy DSP off the main thread into a **Web Worker**. (`src/worker/dsp.worker.ts`, `src/worker/client.ts`)
+      ffmpeg already runs in its own worker, so MP3 decode/encode never blocked the main thread — only our
+      DSP did. Orchestration stays on the main thread to avoid fragile nested workers.
+- [x] Transfer `ArrayBuffer`s to the worker (copy-then-transfer so the UI's retained bytes aren't detached).
+- [x] Progress (threaded through `processStft`→`spectralClean`→`cleanWavSpectra`) + Cancel (worker
+      `terminate()`, since GitHub Pages has no SharedArrayBuffer for a cooperative cancel flag). (`src/ui/app.ts`)
+- [x] Injectable `DspRunner` so `processWithMode` uses the worker in the UI but stays synchronous/testable.
+- Note: Cancel aborts the DSP stage; for MP3 it can't interrupt an in-flight ffmpeg decode/encode (separate worker).
+- [ ] Browser verification of worker progress/cancel still pending (shared with the ffmpeg in-browser check).
 
 ## Phase 6 — UI
 - [ ] Single-page interface: drop zone, mode selector, progress, before/after report, download.

@@ -25,7 +25,8 @@ export interface StftOptions {
 export function processStft(
   input: Float32Array,
   options: StftOptions,
-  transform: SpectralTransform
+  transform: SpectralTransform,
+  onProgress?: (ratio: number) => void
 ): Float32Array {
   const { fftSize, hop } = options;
   if (hop <= 0 || hop > fftSize) throw new Error('hop must be in (0, fftSize]');
@@ -35,8 +36,11 @@ export function processStft(
   const re = new Float64Array(fftSize);
   const im = new Float64Array(fftSize);
 
+  const totalFrames = Math.max(1, Math.ceil(input.length / hop));
   let frame = 0;
   for (let start = 0; start < input.length; start += hop, frame++) {
+    // Report roughly every 16 frames to keep message volume low.
+    if (onProgress && frame % 16 === 0) onProgress(frame / totalFrames);
     for (let i = 0; i < fftSize; i++) {
       const idx = start + i;
       const sample = idx < input.length ? input[idx]! : 0;
@@ -62,5 +66,6 @@ export function processStft(
     const denom = norm[i]!;
     if (denom > 1e-6) out[i] = out[i]! / denom;
   }
+  if (onProgress) onProgress(1);
   return out;
 }

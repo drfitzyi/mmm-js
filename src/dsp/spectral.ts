@@ -14,6 +14,8 @@ export interface SpectralCleanerOptions {
   intensity?: number;
   /** Seed for the jitter PRNG so results are reproducible. */
   seed?: number;
+  /** Progress callback, called with a 0..1 ratio during processing. */
+  onProgress?: (ratio: number) => void;
 }
 
 const DEFAULTS = { fftSize: 2048, intensity: 0.2, seed: 0x9e3779b9 } as const;
@@ -36,7 +38,7 @@ export function spectralClean(
 
   const seed = options.seed ?? DEFAULTS.seed;
   const transform = makeJitterTransform(fftSize, intensity, seed);
-  return processStft(input, { fftSize, hop }, transform);
+  return processStft(input, { fftSize, hop }, transform, options.onProgress);
 }
 
 function makeJitterTransform(fftSize: number, intensity: number, seed: number): SpectralTransform {
