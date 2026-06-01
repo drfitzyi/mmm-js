@@ -27,8 +27,7 @@ const SYNC_TONES = [1000, 2000, 3000, 4000, 5000, 10000, 15000];
 
 export interface Mode {
   name: ModeName;
-  label: string;
-  description: string;
+  // Display label/description live in src/i18n.ts under `mode.<name>.label`/`.desc`.
   /**
    * Pitch shift, in percent (0 = none). The primary fingerprint-breaker:
    * recognition keys on spectral-peak positions and a pitch shift moves all of
@@ -50,26 +49,18 @@ export interface Mode {
 export const MODES: Record<ModeName, Mode> = {
   metadata: {
     name: 'metadata',
-    label: 'Metadata only (lossless)',
-    description:
-      'Strip tags only, keeping the audio bit-for-bit. Does NOT defeat acoustic recognition.',
     pitchPercent: 0,
     tempoPercent: 0,
     spectral: null,
   },
   turbo: {
     name: 'turbo',
-    label: 'Turbo (gentle pitch)',
-    description: 'A ~3% pitch shift — mildest audible change, may not fool stronger matchers.',
     pitchPercent: 3,
     tempoPercent: 0,
     spectral: null,
   },
   standard: {
     name: 'standard',
-    label: 'Standard (pitch + surgery)',
-    description:
-      'A ~4.5% pitch shift plus sync-tone notches and high-frequency watermark attenuation.',
     pitchPercent: 4.5,
     tempoPercent: 0,
     spectral: {
@@ -82,9 +73,6 @@ export const MODES: Record<ModeName, Mode> = {
   },
   paranoid: {
     name: 'paranoid',
-    label: 'Paranoid (maximum)',
-    description:
-      'A ~7% pitch shift, a ~3% tempo change, band-limiting, notches and strong phase randomization.',
     pitchPercent: 7,
     tempoPercent: -3,
     spectral: {

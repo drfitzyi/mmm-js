@@ -91,6 +91,10 @@ Still not ported from upstream: FLAC input, multiband noise injection, "human im
 - [x] Graceful errors: unsupported format (with a hint), empty file, read failure, large-file warning.
 - [x] Distinctive restrained styling with design tokens + light/dark; accessible progress/status (aria-live).
 
+## Localization ✅
+- [x] i18n layer (`src/i18n.ts`): English (default) + French, chosen from `navigator.language` (fr* → fr).
+- [x] All UI strings + mode labels/descriptions routed through `t()`; `<html lang>` and `<title>` set at mount.
+
 ## Phase 7 — Deploy to GitHub Pages
 - [ ] GitHub Actions workflow: build on push to `main`, publish `dist/` to Pages.
 - [ ] Verify the `base` path so assets/workers/WASM resolve correctly on the Pages URL.
