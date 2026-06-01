@@ -95,10 +95,11 @@ Still not ported from upstream: FLAC input, multiband noise injection, "human im
 - [x] i18n layer (`src/i18n.ts`): English (default) + French, chosen from `navigator.language` (fr* → fr).
 - [x] All UI strings + mode labels/descriptions routed through `t()`; `<html lang>` and `<title>` set at mount.
 
-## Phase 7 — Deploy to GitHub Pages
-- [ ] GitHub Actions workflow: build on push to `main`, publish `dist/` to Pages.
-- [ ] Verify the `base` path so assets/workers/WASM resolve correctly on the Pages URL.
-- [ ] Smoke-test the deployed site end-to-end with a real MP3 and WAV.
+## Phase 7 — Deploy to GitHub Pages ✅
+- [x] GitHub Actions workflow: build on push to `main`/`master` + manual dispatch, publish `dist/`. (`.github/workflows/deploy.yml`)
+- [x] Verified the `base` path (`/mmm-js/`): index.html, the DSP worker chunk and the ffmpeg-core/wasm all resolve under it.
+- [x] Documented one-time setup (Settings → Pages → Source: GitHub Actions) + `VITE_BASE` override in README.
+- [ ] **Manual:** enable Pages in repo settings, push, and smoke-test the live site with a real MP3 and WAV.
 
 ---
 
