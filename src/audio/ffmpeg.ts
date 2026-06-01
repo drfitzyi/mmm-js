@@ -63,7 +63,10 @@ export async function transcode(
   const progress = options.onProgress;
   if (progress) ffmpeg.on('progress', ({ progress: ratio }) => progress(ratio));
 
-  await ffmpeg.writeFile(inputName, input);
+  // ffmpeg.writeFile transfers the buffer to its worker, which DETACHES it in
+  // the main thread. Hand over a throwaway copy so the caller's bytes (which the
+  // UI keeps for repeated strip/clean/analyze actions) stay valid.
+  await ffmpeg.writeFile(inputName, input.slice());
   try {
     await ffmpeg.exec(['-i', inputName, ...args, outputName]);
     const data = await ffmpeg.readFile(outputName);
