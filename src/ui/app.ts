@@ -2,6 +2,7 @@ import { readFileAsBytes } from '../io/file';
 import { downloadBytes, mimeForName } from '../io/download';
 import { parseAudio, metadataByteCount } from '../audio';
 import type { AudioInfo } from '../audio';
+import { stripMetadata } from '../sanitize/metadata';
 
 /** Mount the (Phase 1) intake UI into the given root element. */
 export function mountApp(root: HTMLElement): void {
@@ -23,9 +24,7 @@ export function mountApp(root: HTMLElement): void {
     const bytes = await readFileAsBytes(file);
     try {
       const info = parseAudio(bytes);
-      renderReport(report, file.name, info, () =>
-        downloadBytes(bytes, file.name, mimeForName(file.name))
-      );
+      renderReport(report, file.name, bytes, info);
     } catch (err) {
       report.hidden = false;
       report.innerHTML = `<p class="error">Could not read ${escapeHtml(file.name)}: ${escapeHtml(
@@ -57,12 +56,7 @@ export function mountApp(root: HTMLElement): void {
   });
 }
 
-function renderReport(
-  el: HTMLElement,
-  name: string,
-  info: AudioInfo,
-  onDownload: () => void
-): void {
+function renderReport(el: HTMLElement, name: string, bytes: Uint8Array, info: AudioInfo): void {
   const metaBytes = metadataByteCount(info);
   const rows = info.regions
     .map(
@@ -87,10 +81,33 @@ function renderReport(
       <thead><tr><th>Region</th><th>Kind</th><th class="num">Size</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <button id="dl" type="button">Download copy</button>
-    <p class="note">Metadata stripping lands in Phase 2 — for now this downloads an unmodified copy.</p>
+    <button id="strip" type="button">Strip metadata &amp; download</button>
+    <p id="strip-status" class="note" role="status"></p>
   `;
-  required<HTMLButtonElement>(el, '#dl').addEventListener('click', onDownload);
+
+  const status = required<HTMLElement>(el, '#strip-status');
+  required<HTMLButtonElement>(el, '#strip').addEventListener('click', () => {
+    try {
+      const result = stripMetadata(bytes);
+      const outName = withSuffix(name, '.stripped');
+      downloadBytes(result.bytes, outName, mimeForName(name));
+      status.classList.remove('error');
+      status.textContent =
+        result.bytesRemoved > 0
+          ? `Removed ${formatBytes(result.bytesRemoved)} of metadata → ${escapeHtml(outName)} (${formatBytes(result.bytes.length)}).`
+          : `No metadata to remove — downloaded an exact copy as ${escapeHtml(outName)}.`;
+    } catch (err) {
+      status.classList.add('error');
+      status.textContent = `Could not strip metadata: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  });
+}
+
+/** Insert `suffix` before the file extension: ("song.mp3", ".stripped") → "song.stripped.mp3". */
+function withSuffix(name: string, suffix: string): string {
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return name + suffix;
+  return name.slice(0, dot) + suffix + name.slice(dot);
 }
 
 function required<T extends Element>(scope: ParentNode, selector: string): T {

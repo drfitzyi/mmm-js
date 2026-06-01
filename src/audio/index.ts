@@ -4,7 +4,7 @@ import { parseMp3 } from './mp3';
 import type { AudioInfo } from './types';
 
 export { detectFormat } from './format';
-export { parseWav, buildWav } from './wav';
+export { parseWav, buildWav, chunkKind } from './wav';
 export type { WavFile, WavChunk } from './wav';
 export { parseMp3 } from './mp3';
 export type { Mp3File } from './mp3';

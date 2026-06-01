@@ -24,12 +24,13 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] Unified `Region` model (`header`/`audio`/`metadata`) + `parseAudio` dispatcher feeding the UI breakdown. (`src/audio/index.ts`, `src/audio/types.ts`)
 - [ ] Manual check: confirm in-browser that the network tab stays silent on the deployed/dev build.
 
-## Phase 2 — Metadata removal (the core, highest-value feature)
-- [ ] Strip ID3v2 (leading) and ID3v1 (trailing 128 bytes) tags from MP3.
-- [ ] Strip RIFF `INFO`/`LIST` and other non-audio chunks from WAV.
-- [ ] Strip FLAC tags (Vorbis comments) if FLAC support is in scope — otherwise note as out of scope.
-- [ ] Re-emit a clean file with only the audio payload + minimal required headers.
-- [ ] Verify: re-parse output and assert zero residual metadata.
+## Phase 2 — Metadata removal (the core, highest-value feature) ✅
+- [x] Strip ID3v2 (leading) + APEv2 and ID3v1 (trailing) tags from MP3 — keep only the audio span. (`src/sanitize/metadata.ts`)
+- [x] Strip RIFF `INFO`/`LIST` and other non-essential chunks from WAV via `buildWav`. (`src/sanitize/metadata.ts`)
+- [ ] FLAC tags (Vorbis comments) — **out of scope** for now (FLAC not yet a supported input format).
+- [x] Re-emit a clean file with only the audio payload + minimal required headers.
+- [x] Verify: re-parse output and assert zero residual metadata (built into `stripMetadata` as a safety net + tested).
+- [x] Wire "Strip metadata & download" into the UI with bytes-removed feedback. (`src/ui/app.ts`)
 
 ## Phase 3 — Spectral analysis & modification (Web Audio / DSP)
 - [ ] Decode audio to PCM samples via `AudioContext.decodeAudioData` (or a WASM decoder for fidelity).

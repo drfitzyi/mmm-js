@@ -19,7 +19,8 @@ export interface WavFile extends AudioInfo {
 // Chunks that carry the actual audio/structure and must be preserved.
 const ESSENTIAL_CHUNKS = new Set(['fmt ', 'data', 'fact']);
 
-function classify(id: string): RegionKind {
+/** Classify a RIFF chunk: `data` is audio, fmt/fact are structural, the rest is strippable metadata. */
+export function chunkKind(id: string): RegionKind {
   if (id === 'data') return 'audio';
   if (ESSENTIAL_CHUNKS.has(id)) return 'header';
   return 'metadata';
@@ -58,7 +59,7 @@ export function parseWav(bytes: Uint8Array): WavFile {
       data: bytes.subarray(dataOffset, dataOffset + dataSize),
     });
     regions.push({
-      kind: classify(id),
+      kind: chunkKind(id),
       label: `${id.trim() || '(blank)'} chunk`,
       offset: pos,
       length: 8 + dataSize + padByte,
